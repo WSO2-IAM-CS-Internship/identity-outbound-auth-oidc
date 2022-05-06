@@ -64,22 +64,13 @@ import org.wso2.carbon.user.api.UserRealm;
 import org.wso2.carbon.user.api.UserStoreException;
 import org.wso2.carbon.user.core.UserStoreManager;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.UnsupportedEncodingException;
+import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.text.ParseException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -99,6 +90,9 @@ public class OpenIDConnectAuthenticator extends AbstractApplicationAuthenticator
     private static final String DYNAMIC_PARAMETER_LOOKUP_REGEX = "\\$\\{(\\w+)\\}";
     private static Pattern pattern = Pattern.compile(DYNAMIC_PARAMETER_LOOKUP_REGEX);
     private static final String[] NON_USER_ATTRIBUTES = new String[]{"at_hash", "iss", "iat", "exp", "aud", "azp"};
+    private static final String TEST_CLIENTID = "534933998570-dpeh431h3ureae4ogrogeovc2ah27tsv.apps.googleusercontent.com";
+    private static final String TEST_SECRET = "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";
+    private static boolean DEMO_FLOW = false;
 
     @Override
     public AuthenticatorFlowStatus process(HttpServletRequest request, HttpServletResponse response,
@@ -300,7 +294,7 @@ public class OpenIDConnectAuthenticator extends AbstractApplicationAuthenticator
 
         try {
             String accessToken = token.getParam(OIDCAuthenticatorConstants.ACCESS_TOKEN);
-            String url = getUserInfoEndpoint(token, authenticatorProperties);
+            String url = getUserInfoEndpoint(token, authenticatorProperties); //https://www.googleapis.com/oauth2/v3/userinfo
             String json = sendRequest(url, accessToken);
 
             if (StringUtils.isBlank(json)) {
@@ -347,10 +341,10 @@ public class OpenIDConnectAuthenticator extends AbstractApplicationAuthenticator
         try {
             Map<String, String> authenticatorProperties = context.getAuthenticatorProperties();
             if (authenticatorProperties != null) {
-                String clientId = authenticatorProperties.get(OIDCAuthenticatorConstants.CLIENT_ID);
+                String clientId = (isTestParameterAmongQueryParams(context.getQueryParams())) ? TEST_CLIENTID : authenticatorProperties.get(OIDCAuthenticatorConstants.CLIENT_ID);
                 String authorizationEP = getOIDCAuthzEndpoint(authenticatorProperties);
                 String callbackurl = getCallbackUrl(authenticatorProperties);
-                String state = getStateParameter(context, authenticatorProperties);
+                String state = (isTestParameterAmongQueryParams(context.getQueryParams())) ? getTestStateParameter(context, authenticatorProperties) : getStateParameter(context, authenticatorProperties);
 
                 OAuthClientRequest authzRequest;
 
@@ -433,11 +427,20 @@ public class OpenIDConnectAuthenticator extends AbstractApplicationAuthenticator
         return;
     }
 
-    private String getStateParameter(AuthenticationContext context, Map<String, String> authenticatorProperties) {
+    private String
+    getStateParameter(AuthenticationContext context, Map<String, String> authenticatorProperties) {
 
-        String state = context.getContextIdentifier() + "," + OIDCAuthenticatorConstants.LOGIN_TYPE;
+        String state = "demo_" + context.getContextIdentifier() + "," + OIDCAuthenticatorConstants.LOGIN_TYPE; //context.getContextIdentifier() + "," + OIDCAuthenticatorConstants.LOGIN_TYPE;
         return getState(state, authenticatorProperties);
     }
+
+    // RUKSHan
+    private String getTestStateParameter(AuthenticationContext context, Map<String, String> authenticatorProperties) {
+
+        String state = "demo_" + context.getContextIdentifier();
+        return getState(state, authenticatorProperties);
+    }
+    //
 
     private String getOIDCAuthzEndpoint(Map<String, String> authenticatorProperties) {
 
@@ -451,7 +454,10 @@ public class OpenIDConnectAuthenticator extends AbstractApplicationAuthenticator
     @Override
     protected void processAuthenticationResponse(HttpServletRequest request, HttpServletResponse response,
                                                  AuthenticationContext context) throws AuthenticationFailedException {
-
+        if (DEMO_FLOW) {
+            demoProcessAuthenticationResponse(request, response, context);
+            return;
+        }
         try {
 
             OAuthAuthzResponse authzResponse = OAuthAuthzResponse.oauthCodeAuthzResponse(request);
@@ -463,6 +469,7 @@ public class OpenIDConnectAuthenticator extends AbstractApplicationAuthenticator
 
             // TODO : return access token and id token to framework
             String accessToken = oAuthResponse.getParam(OIDCAuthenticatorConstants.ACCESS_TOKEN);
+
 
             if (StringUtils.isBlank(accessToken)) {
                 throw new AuthenticationFailedException(ErrorMessages.ACCESS_TOKEN_EMPTY_OR_NULL.getCode(),
@@ -477,6 +484,15 @@ public class OpenIDConnectAuthenticator extends AbstractApplicationAuthenticator
                                 getTokenEndpoint(authenticatorProperties),
                                 authenticatorProperties.get(OIDCAuthenticatorConstants.CLIENT_ID)));
             }
+            /////////// my added code
+            if (DEMO_FLOW) {
+                try {
+                    response.sendRedirect("http://localhost:8080/playground2/success.jsp");
+                } catch (IOException ioe) {
+                    ioe.printStackTrace();
+                }
+            }
+            ///////////////////
 
             OIDCStateInfo stateInfoOIDC = new OIDCStateInfo();
             stateInfoOIDC.setIdTokenHint(idToken);
@@ -518,7 +534,7 @@ public class OpenIDConnectAuthenticator extends AbstractApplicationAuthenticator
                 jsonObject.entrySet().stream()
                         .filter(entry -> !ArrayUtils.contains(NON_USER_ATTRIBUTES, entry.getKey()))
                         .forEach(entry -> buildClaimMappings(claims, entry, attributeSeparator));
-                
+
                 authenticatedUser = AuthenticatedUser
                         .createFederateAuthenticatedUserFromSubjectIdentifier(authenticatedUserId);
             } else {
@@ -538,6 +554,167 @@ public class OpenIDConnectAuthenticator extends AbstractApplicationAuthenticator
         } catch (OAuthProblemException e) {
             throw new AuthenticationFailedException(ErrorMessages.AUTHENTICATION_PROCESS_FAILED.getCode(),
                     ErrorMessages.AUTHENTICATION_PROCESS_FAILED.getMessage(), context.getSubject(), e);
+        }
+    }
+
+    private void demoProcessAuthenticationResponse(HttpServletRequest request, HttpServletResponse response, AuthenticationContext context) throws AuthenticationFailedException {
+
+        try {
+            OAuthAuthzResponse authzResponse = OAuthAuthzResponse.oauthCodeAuthzResponse(request);
+            Map<String, String> authenticatorProperties = context.getAuthenticatorProperties();
+            authenticatorProperties.put("AdditionalQueryParameters","scope=openid email profile");
+            authenticatorProperties.put("ClientSecret",TEST_SECRET);
+            authenticatorProperties.put("ClientId",TEST_SECRET);
+            authenticatorProperties.put("callbackUrl","https://localhost:9443/commonauth");
+            String clientId = "";
+            String clientSecret = "";
+            clientId = TEST_CLIENTID;
+            clientSecret = TEST_SECRET;
+            String tokenEndPoint = "https://accounts.google.com/o/oauth2/token";
+            String callbackUrl = "https://localhost:9443/commonauth";
+
+            boolean isHTTPBasicAuth = Boolean.parseBoolean(authenticatorProperties.get(OIDCAuthenticatorConstants
+                    .IS_BASIC_AUTH_ENABLED));
+
+            OAuthClientRequest accessTokenRequest;
+            if (isHTTPBasicAuth) {
+
+                if (log.isDebugEnabled()) {
+                    log.debug("Authenticating to token endpoint: " + tokenEndPoint + " with HTTP basic " +
+                            "authentication scheme.");
+                }
+
+                accessTokenRequest = OAuthClientRequest.tokenLocation(tokenEndPoint).setGrantType(GrantType
+                                .AUTHORIZATION_CODE).setRedirectURI(callbackUrl).setCode(authzResponse.getCode())
+                        .buildBodyMessage();
+                String base64EncodedCredential = new String(Base64.encodeBase64((clientId + ":" +
+                        clientSecret).getBytes()));
+                accessTokenRequest.addHeader(OAuth.HeaderType.AUTHORIZATION, "Basic " + base64EncodedCredential);
+            } else {
+
+                if (log.isDebugEnabled()) {
+                    log.debug("Authenticating to token endpoint: " + tokenEndPoint + " including client credentials "
+                            + "in request body.");
+                }
+                accessTokenRequest = OAuthClientRequest.tokenLocation(tokenEndPoint).setGrantType(GrantType
+                        .AUTHORIZATION_CODE).setClientId(clientId).setClientSecret(clientSecret).setRedirectURI
+                        (callbackUrl).setCode(authzResponse.getCode()).buildBodyMessage();
+            }
+            // set 'Origin' header to access token request.
+            if (accessTokenRequest != null) {
+                // fetch the 'Hostname' configured in carbon.xml
+                String serverURL = ServiceURLBuilder.create().build().getAbsolutePublicURL();
+                accessTokenRequest.addHeader(OIDCAuthenticatorConstants.HTTP_ORIGIN_HEADER, serverURL);
+            }
+
+            // Create OAuth client that uses custom http client under the hood
+            OAuthClient oAuthClient = new OAuthClient(new URLConnectionClient());
+            OAuthClientResponse oAuthResponse = getOauthResponse(oAuthClient, accessTokenRequest);
+
+            // TODO : return access token and id token to framework
+            String accessToken = oAuthResponse.getParam(OIDCAuthenticatorConstants.ACCESS_TOKEN);
+
+
+            if (StringUtils.isBlank(accessToken)) {
+                throw new AuthenticationFailedException(ErrorMessages.ACCESS_TOKEN_EMPTY_OR_NULL.getCode(),
+                        ErrorMessages.ACCESS_TOKEN_EMPTY_OR_NULL.getMessage());
+            }
+
+            String idToken = oAuthResponse.getParam(OIDCAuthenticatorConstants.ID_TOKEN);
+            authenticatorProperties = context.getAuthenticatorProperties();
+            if (StringUtils.isBlank(idToken) && requiredIDToken(authenticatorProperties)) {
+                throw new AuthenticationFailedException(ErrorMessages.ID_TOKEN_MISSED_IN_OIDC_RESPONSE.getCode(),
+                        String.format(ErrorMessages.ID_TOKEN_MISSED_IN_OIDC_RESPONSE.getMessage(),
+                                getTokenEndpoint(authenticatorProperties),
+                                authenticatorProperties.get(OIDCAuthenticatorConstants.CLIENT_ID)));
+            }
+
+            OIDCStateInfo stateInfoOIDC = new OIDCStateInfo();
+            stateInfoOIDC.setIdTokenHint(idToken);
+            context.setStateInfo(stateInfoOIDC);
+
+            context.setProperty(OIDCAuthenticatorConstants.ACCESS_TOKEN, accessToken);
+
+            AuthenticatedUser authenticatedUser;
+            Map<ClaimMapping, String> claims = new HashMap<>();
+            Map<String, Object> jsonObject = new HashMap<>();
+
+            if (StringUtils.isNotBlank(idToken)) {
+                jsonObject = getIdTokenClaims(context, idToken);
+                if (jsonObject == null) {
+                    String errorMessage = ErrorMessages.DECODED_JSON_OBJECT_IS_NULL.getMessage();
+                    if (log.isDebugEnabled()) {
+                        log.debug(errorMessage);
+                    }
+                    throw new AuthenticationFailedException(ErrorMessages.DECODED_JSON_OBJECT_IS_NULL.getCode(),
+                            errorMessage);
+                }
+
+                String idpName = "GoogleIDP";
+                String sidClaim = (String) jsonObject.get(OIDCAuthenticatorConstants.Claim.SID);
+                if (StringUtils.isNotBlank(sidClaim) && StringUtils.isNotBlank(idpName)) {
+                    // Add 'sid' claim into authentication context, to be stored in the UserSessionStore for
+                    // single logout.
+                    context.setProperty(FEDERATED_IDP_SESSION_ID + idpName, sidClaim);
+                }
+
+                if (log.isDebugEnabled() && IdentityUtil
+                        .isTokenLoggable(IdentityConstants.IdentityTokens.USER_ID_TOKEN)) {
+                    log.debug("Retrieved the User Information:" + jsonObject);
+                }
+
+                String authenticatedUserId = getAuthenticatedUserId(context, oAuthResponse, jsonObject);
+                String attributeSeparator = getMultiAttributeSeparator(context, authenticatedUserId);
+
+                jsonObject.entrySet().stream()
+                        .filter(entry -> !ArrayUtils.contains(NON_USER_ATTRIBUTES, entry.getKey()))
+                        .forEach(entry -> buildClaimMappings(claims, entry, attributeSeparator));
+
+                authenticatedUser = AuthenticatedUser
+                        .createFederateAuthenticatedUserFromSubjectIdentifier(authenticatedUserId);
+            } else {
+
+                if (log.isDebugEnabled()) {
+                    log.debug("The IdToken is null");
+                }
+                authenticatedUser = AuthenticatedUser.createFederateAuthenticatedUserFromSubjectIdentifier(
+                        getAuthenticateUser(context, jsonObject, oAuthResponse));
+            }
+
+            claims.putAll(getSubjectAttributes(oAuthResponse, authenticatorProperties));
+            authenticatedUser.setUserAttributes(claims);
+
+            context.setSubject(authenticatedUser);
+
+            //demoWriteToProperties(accessToken, idToken, jsonObject.toString());
+
+        } catch (OAuthSystemException e) {
+            if (log.isDebugEnabled()) {
+                log.debug(String.format(ErrorMessages.BUILDING_ACCESS_TOKEN_REQUEST_FAILED.getMessage()), e);
+            }
+            throw new AuthenticationFailedException(ErrorMessages.BUILDING_ACCESS_TOKEN_REQUEST_FAILED.getCode(), e);
+        } catch (URLBuilderException e) {
+            throw new RuntimeException("Error occurred while building URL in tenant qualified mode.", e);
+        } catch (OAuthProblemException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void demoWriteToProperties(String accessToken, String idToken, String jsonObj) {
+        try {
+            Properties prop = new Properties();
+            File file = new File("/home/rukshank/TOMCAT/apache-tomcat-8.5.77/webapps/playground2/WEB-INF/classes/user-info.properties");//InputStream in = getClass().getResourceAsStream("/user-info.properties");
+            InputStream in = new FileInputStream(file);
+            prop.load(in);
+
+            prop.setProperty("accessToken",accessToken);
+            prop.setProperty("idToken", idToken);
+            prop.setProperty("jsonObj", jsonObj);
+
+            prop.store(new FileOutputStream("/home/rukshank/TOMCAT/apache-tomcat-8.5.77/webapps/playground2/WEB-INF/classes/user-info.properties"), null);
+            return;
+        } catch (IOException ioe) {
+            ioe.printStackTrace();
         }
     }
 
@@ -680,6 +857,11 @@ public class OpenIDConnectAuthenticator extends AbstractApplicationAuthenticator
                 .get(IdentityApplicationConstants.Authenticator.OIDC.IS_USER_ID_IN_CLAIMS));
     }
 
+    private boolean isTestParameterAmongQueryParams(String queryParams) {
+        if (queryParams.contains("&test=true")) return true;
+        return false;
+    }
+
     protected void buildClaimMappings(Map<ClaimMapping, String> claims, Map.Entry<String, Object> entry,
                                       String separator) {
 
@@ -715,9 +897,16 @@ public class OpenIDConnectAuthenticator extends AbstractApplicationAuthenticator
             authzResponse) throws AuthenticationFailedException {
 
         Map<String, String> authenticatorProperties = context.getAuthenticatorProperties();
-
-        String clientId = authenticatorProperties.get(OIDCAuthenticatorConstants.CLIENT_ID);
-        String clientSecret = authenticatorProperties.get(OIDCAuthenticatorConstants.CLIENT_SECRET);
+        String clientId = "";
+        String clientSecret = "";
+//        if(DEMO_FLOW){
+//            clientId = TEST_CLIENTID;
+//            clientSecret = TEST_SECRET;
+//        }
+//        else{
+        clientId = authenticatorProperties.get(OIDCAuthenticatorConstants.CLIENT_ID);
+        clientSecret = authenticatorProperties.get(OIDCAuthenticatorConstants.CLIENT_SECRET);
+//        }
         String tokenEndPoint = getTokenEndpoint(authenticatorProperties);
 
         String callbackUrl = getCallbackUrlFromInitialRequestParamMap(context);
@@ -738,7 +927,7 @@ public class OpenIDConnectAuthenticator extends AbstractApplicationAuthenticator
                 }
 
                 accessTokenRequest = OAuthClientRequest.tokenLocation(tokenEndPoint).setGrantType(GrantType
-                        .AUTHORIZATION_CODE).setRedirectURI(callbackUrl).setCode(authzResponse.getCode())
+                                .AUTHORIZATION_CODE).setRedirectURI(callbackUrl).setCode(authzResponse.getCode())
                         .buildBodyMessage();
                 String base64EncodedCredential = new String(Base64.encodeBase64((clientId + ":" +
                         clientSecret).getBytes()));
@@ -795,7 +984,11 @@ public class OpenIDConnectAuthenticator extends AbstractApplicationAuthenticator
             log.debug("Inside OpenIDConnectAuthenticator.getContextIdentifier()");
         }
         String state = request.getParameter(OIDCAuthenticatorConstants.OAUTH2_PARAM_STATE);
-        if (state != null) {
+        DEMO_FLOW = false;
+        if (state != null && state.contains("demo_")) {
+            DEMO_FLOW = true;
+            return state.split("_")[1].split(",")[0];
+        } else if (state != null) {
             return state.split(",")[0];
         } else {
             return null;
