@@ -686,8 +686,6 @@ public class OpenIDConnectAuthenticator extends AbstractApplicationAuthenticator
 
             context.setSubject(authenticatedUser);
 
-            //demoWriteToProperties(accessToken, idToken, jsonObject.toString());
-
         } catch (OAuthSystemException e) {
             if (log.isDebugEnabled()) {
                 log.debug(String.format(ErrorMessages.BUILDING_ACCESS_TOKEN_REQUEST_FAILED.getMessage()), e);
@@ -700,23 +698,6 @@ public class OpenIDConnectAuthenticator extends AbstractApplicationAuthenticator
         }
     }
 
-    private void demoWriteToProperties(String accessToken, String idToken, String jsonObj) {
-        try {
-            Properties prop = new Properties();
-            File file = new File("/home/rukshank/TOMCAT/apache-tomcat-8.5.77/webapps/playground2/WEB-INF/classes/user-info.properties");//InputStream in = getClass().getResourceAsStream("/user-info.properties");
-            InputStream in = new FileInputStream(file);
-            prop.load(in);
-
-            prop.setProperty("accessToken",accessToken);
-            prop.setProperty("idToken", idToken);
-            prop.setProperty("jsonObj", jsonObj);
-
-            prop.store(new FileOutputStream("/home/rukshank/TOMCAT/apache-tomcat-8.5.77/webapps/playground2/WEB-INF/classes/user-info.properties"), null);
-            return;
-        } catch (IOException ioe) {
-            ioe.printStackTrace();
-        }
-    }
 
     @Override
 
@@ -985,10 +966,8 @@ public class OpenIDConnectAuthenticator extends AbstractApplicationAuthenticator
         }
         String state = request.getParameter(OIDCAuthenticatorConstants.OAUTH2_PARAM_STATE);
         DEMO_FLOW = false;
-        if (state != null && state.contains("demo_")) {
-            DEMO_FLOW = true;
-            return state.split("_")[1].split(",")[0];
-        } else if (state != null) {
+        if (state != null) {
+            DEMO_FLOW = state.contains("demo_");
             return state.split(",")[0];
         } else {
             return null;
